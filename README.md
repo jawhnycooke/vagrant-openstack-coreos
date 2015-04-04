@@ -1,6 +1,6 @@
 #vagrant-openstack-coreos
 
-Make sure that following enviroment variables are sourced before you do "vargant up" or deploy_in_parallel.sh/destroy_in_parallel.sh
+Make sure that following enviroment variables are sourced before you do `vargant up` or deploy_in_parallel.sh/destroy_in_parallel.sh
 
 #OPENSTACK
 
