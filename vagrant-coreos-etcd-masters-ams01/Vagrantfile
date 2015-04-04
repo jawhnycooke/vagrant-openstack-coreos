@@ -1,0 +1,235 @@
+require 'vagrant-openstack-provider'
+
+Vagrant.configure('2') do |config|
+
+  url = URI.parse('http://discovery.etcd.io/new')
+  req = Net::HTTP::Get.new(url.to_s)
+  res = Net::HTTP.start(url.host, url.port) {|http|
+    http.request(req)
+  }
+  etcd_discovery_url = res.body
+
+  config.ssh.username = ENV['OS_SSH_USERNAME']
+  config.vm.provider :openstack do |os|
+    os.username           = ENV['OS_USERNAME']
+    os.password           = ENV['OS_PASSWORD']
+    os.flavor             = "GP2-Large"
+    os.image              = "CoreOS-stable"
+    os.openstack_auth_url = 'https://eu-amsterdam-1.cloud.cisco.com:5000/v2.0/tokens'
+    os.openstack_network_url = "https://eu-amsterdam-1.cloud.cisco.com:9696/v2.0"
+    os.openstack_image_url = "https://eu-amsterdam-1.cloud.cisco.com:9292/v2.0"
+    os.openstack_volume_url = "https://eu-amsterdam-1.cloud.cisco.com:8776/v1/c68190b89a884b43af54b8051ee82873"
+    os.tenant_name        = ENV['OS_TENANT_NAME']
+    os.sync_method        = 'none'
+
+    #This ssh_disabled will keep vagrant not trying to ssh into machine after boot.
+    os.ssh_disabled = "true"
+    os.keypair_name = "messenger-infra"
+
+
+  end
+
+(0..2).each do |i|
+    config.vm.define "instance_#{i}" do |instance|
+      instance.vm.provider :openstack do |os|
+        os.server_name      = "core-#{i}"
+        os.networks           = {id: '424b8aab-c40e-4cd1-af09-cdb883bb24c6', address: "192.168.1.1#{i}" }
+        #os.floating_ip_pool = ENV['OS_FLOATING_IP_POOL']
+        os.user_data = "#cloud-config
+hostname: core-#{i}.webex-ng.com
+write_files:
+  - path: /etc/resolv.conf
+    content: |
+      nameserver 127.0.0.1
+      nameserver 8.8.8.8
+      nameserver 8.8.4.4
+  - path: /etc/systemd/system/docker.service.d/50-mirror-registry.conf
+    content: |
+      [Service]
+      Environment=DOCKER_OPTS=\"--registry-mirror=http://docker-registry-ams01.webex-ng.com:5000\"
+coreos:
+  etcd:
+    # generate a new token for each unique cluster from https://discovery.etcd.io/new
+    discovery: #{etcd_discovery_url}
+    # multi-region and multi-cloud deployments need to use $public_ipv4
+    addr: 192.168.1.1#{i}:4001
+    peer-addr: 192.168.1.1#{i}:7001
+    peer-election-timeout: 7500
+    peer-heartbeat-interval: 1000
+    #cluster-remove-delay: 300
+  fleet:
+    metadata: role=services,cabinet=#{i},region=eu-ams-1,provider=CiscoCloud
+  update:
+    reboot-strategy: off
+  units:
+    - name: docker.service
+      drop-ins:
+        - name: 50-insecure-registry.conf
+          content: |
+            [Service]
+            Environment=DOCKER_OPTS="'--insecure-registry="192.168.1.0/24"'"
+
+    - name: etcd.service
+      command: start
+    - name: fleet.service
+      command: start
+    - name: docker.service
+      command: restart
+    - name: cadvisor.service
+      content: |
+        [Unit]
+        Description=cadvisor
+        After=docker-registry.service
+
+        [Service]
+        TimeoutStartSec=10m
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill cadvisor
+        ExecStartPre=-/usr/bin/docker rm -f cadvisor
+        ExecStartPre=/usr/bin/docker pull google/cadvisor
+        ExecStart=/usr/bin/docker run --volume=/:/rootfs:ro --volume=/var/run:/var/run:rw --volume=/sys:/sys:ro --volume=/var/lib/docker/:/var/lib/docker:ro --publish=4194:4194 --name=cadvisor --net=host google/cadvisor:latest --logtostderr --port=4194
+        ExecStop=/usr/bin/docker stop -t 2 cadvisor
+
+        [X-Fleet]
+        Global=true
+
+    - name: skydns.service
+      content: |
+        [Unit]
+        Description=Skydns Service
+        After=docker-registry.service
+
+        [Service]
+        ExecStartPre=-/usr/bin/docker kill skydns
+        ExecStartPre=-/usr/bin/docker rm -f skydns
+        ExecStart=/usr/bin/docker run --net=host -p 0.0.0.0:53:53/udp -p 0.0.0.0:53:53/tcp --name skydns -e SKYDNS_DOMAIN=webex-ng.com -e SKYDNS_NAMESERVERS=8.8.8.8:53,8.8.4.4:53 -e ETCD_MACHINES=http://192.168.1.10:4001,http://192.168.1.11:4001,http://192.168.1.12:4001 skynetservices/skydns -addr 0.0.0.0:53
+        ExecStop=/usr/bin/docker stop -t 10 skydns
+        TimeoutStartSec=10m
+        Restart=always
+        RestartSec=20s
+
+        [X-Fleet]
+        Global=true
+
+    - name: zabbix-agent.service
+      content: |
+        [Unit]
+        Description=Zabbix Agent
+        Requires=docker.service
+        After=docker.service
+        After=zabbix-server.service
+
+        [Service]
+        TimeoutStartSec=5m
+        Restart=always
+        RestartSec=20s
+        ExecStartPre=-/usr/bin/docker kill zabbix-agent
+        ExecStartPre=-/usr/bin/docker rm zabbix-agent
+        ExecStartPre=/usr/bin/docker pull bhuisgen/docker-zabbix-coreos
+        ExecStart=/usr/bin/docker  run --privileged=true --net=host -p 10050:10050  -v /proc:/coreos/proc -v /sys:/coreos/sys -v /dev:/coreos/dev -v /var/run/docker.sock:/coreos/var/run/docker.sock --name zabbix-agent bhuisgen/docker-zabbix-coreos \%H zabbix-server.webex-ng.com
+        ExecStop=/usr/bin/docker stop zabbix-agent
+
+        [X-Fleet]
+        Global=true
+
+    - name: zabbix-server.service
+      content: |
+        [Unit]
+        Description=Zabbix Agent
+        Requires=docker.service
+        After=docker.service
+        After=docker-registry.service
+
+        [Service]
+        TimeoutStartSec=5m
+        Restart=always
+        RestartSec=20s
+        ExecStartPre=-/usr/bin/docker kill zabbix-server
+        ExecStartPre=-/usr/bin/docker rm zabbix-server
+        ExecStartPre=/usr/bin/docker pull zoza1982/zabbix-server
+        ExecStart=/usr/bin/docker run  -p 10051:10051  -p 10052:10052  -p 80:80  -p 2812:2812  -e \"SERVICE_NAME=zabbix-server\" --name zabbix-server zoza1982/zabbix-server
+        ExecStop=/usr/bin/docker stop zabbix-server
+
+        [X-Fleet]
+        MachineMetadata=role=services
+
+    - name: apache@.service
+      content: |
+        [Unit]
+        Description=My Apache Frontend
+        Requires=docker.service
+        After=docker.service
+        After=docker-registry.service
+
+        [Service]
+        TimeoutStartSec=10m
+        Restart=always
+        RestartSec=20s
+        ExecStartPre=-/usr/bin/docker kill apache-%i
+        ExecStartPre=-/usr/bin/docker rm apache-%i
+        ExecStartPre=/usr/bin/docker pull zoza1982/apache
+        ExecStart=/usr/bin/docker run -p 80:80  -e \"SERVICE_NAME=apache-\%i\" -e \"NAME=Webex-app version 1.0\" --name apache-\%i -h \%H zoza1982/apache
+        ExecStop=/usr/bin/docker stop apache-%i
+
+        [X-Fleet]
+        MachineMetadata=role=worker
+        Conflicts=apache@*.service
+
+    - name: registrator.service
+      content: |
+        [Unit]
+        Description=Service Registrator
+        After=docker.service
+        After=docker-registry.service
+
+        [Service]
+        TimeoutStartSec=2m
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill registrator
+        ExecStartPre=-/usr/bin/docker rm -f registrator
+        ExecStart=/usr/bin/bash -c \"/usr/bin/docker run -v /var/run/docker.sock:/tmp/docker.sock --name registrator -h \$HOSTNAME gliderlabs/registrator -ip \$(/bin/ifconfig eth0 | awk '/inet /{print \$2}') skydns2\://192.168.1.10:4001/webex-ng.com\"
+        ExecStop=/usr/bin/docker stop registrator
+
+        [X-Fleet]
+        Global=true
+
+    - name: docker-registry.service
+      content: |
+        [Unit]
+        Description=Docker registry
+        After=docker.service
+
+        [Service]
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill docker-registry
+        ExecStartPre=-/usr/bin/docker rm -f docker-registry
+        ExecStart=/usr/bin/docker run --name docker-registry -e \"SERVICE_NAME=docker-registry-ams01\" -e GUNICORN_OPTS=[--preload] -e STANDALONE=false -e MIRROR_SOURCE=https://registry-1.docker.io -e MIRROR_SOURCE_INDEX=https://index.docker.io -e SETTINGS_FLAVOR=swift -e OS_AUTH_URL=https://us-rdu-1.cisco.com:5000/v2.0 -e STORAGE_PATH=/registry -e OS_USERNAME=cecid -e OS_TENANT_NAME=Webex-Messenger -e OS_CONTAINER=docker-registry -e OS_PASSWORD=YOURPASSWORD -e SEARCH_BACKEND=sqlalchemy -p 5000:5000 pallet/registry-swift docker-registry
+        ExecStop=/usr/bin/docker stop -t docker-registry
+
+        [X-Fleet]
+        MachineMetadata=cabinet=0
+        Conflicts=docker-registry
+
+    - name: primordial.service
+      command: start
+      content: |
+        [Unit]
+        Description=Load and start fleet services
+        After=fleet.service
+        Requires=fleet.service
+        After=etcd.service
+        Requires=etcd.service
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/bin/fleetctl start /etc/systemd/system/docker-registry.service
+        ExecStart=/usr/bin/fleetctl start /etc/systemd/system/cadvisor.service
+        ExecStart=/usr/bin/fleetctl start /etc/systemd/system/skydns.service
+        ExecStart=/usr/bin/fleetctl start /etc/systemd/system/registrator.service"
+
+      end
+    end
+  end
+end
