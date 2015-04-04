@@ -20,6 +20,7 @@ export OS_TENANT_ID=e7e394f0992d47c7ab8342842f573d5c
 
 export OS_TENANT_NAME="Webex-Messenger" 
 
-export OS_USERNAME="cec-id" \ 
+export OS_USERNAME="cec-id"
+
 export OS_PASSWORD="xxxxxxxx" 
 
