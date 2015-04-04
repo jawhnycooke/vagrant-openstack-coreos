@@ -1,3 +1,6 @@
+#Description
+This vagrant code is made to bootstrap the CoreOS cluster in Openstack cloud, once up cluster will configure self-discovery with etcd/skydns2/registrator/docker-registry on swift .... and it have Fleet units ready for deploying auto-discovery  monitoring  server Zabbix and other test services like apache.
+
 #vagrant-openstack-coreos
 
 Make sure that following enviroment variables are sourced before you do `vargant up` or `deploy_in_parallel.sh`/`destroy_in_parallel.sh`
