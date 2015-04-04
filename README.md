@@ -10,8 +10,12 @@ export OS_IMAGE=CoreOS-stable
 export OS_SSH_USERNAME=core 
 
 export HEAT_URL=https://us-rdu-1.cisco.com:8004/v1/e7e394f0992d47c7ab8342842f573d5c 
+
 export OS_TENANT_ID=e7e394f0992d47c7ab8342842f573d5c 
+
 export OS_TENANT_NAME="Webex-Messenger" 
+
 export OS_USERNAME="cec-id" 
+
 export OS_PASSWORD="xxxxxxxx" 
 
