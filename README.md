@@ -1,6 +1,6 @@
 #vagrant-openstack-coreos
 
-Make sure that following enviroment variables are sourced before you do `vargant up` or deploy_in_parallel.sh/destroy_in_parallel.sh
+Make sure that following enviroment variables are sourced before you do `vargant up` or `deploy_in_parallel.sh`/`destroy_in_parallel.sh`
 
 #OPENSTACK
 
@@ -21,6 +21,5 @@ export OS_TENANT_ID=e7e394f0992d47c7ab8342842f573d5c
 export OS_TENANT_NAME="Webex-Messenger" 
 
 export OS_USERNAME="cec-id" 
-
 export OS_PASSWORD="xxxxxxxx" 
 
