@@ -2,7 +2,7 @@
 
 Make sure that following enviroment variables are sourced before you do `vargant up` or `deploy_in_parallel.sh`/`destroy_in_parallel.sh`
 
-#OPENSTACK
+#OPENSTACK ( example for rdu-1 region)
 
 export OS_AUTH_URL=https://us-rdu-1.cisco.com:5000/v2.0
 
